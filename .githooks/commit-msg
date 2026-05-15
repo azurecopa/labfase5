@@ -1,0 +1,60 @@
+#!/bin/sh
+# AIOX Constitution Art. III — Story-Driven Development gate
+#
+# Bloqueia commits que ALTERAM CÓDIGO (feat/fix/perf/ui/refactor) sem
+# rastreabilidade a uma story ou epic. Causa-raiz do retrabalho da
+# Story 0.10 (30 commits de 2026-05-08 sem story → consolidação retroativa).
+#
+# Aceita rastreabilidade em qualquer lugar da mensagem:
+#   [Story 1.4]  /  [Story 0.10]  /  [EPIC-001]  /  [EPIC-000]
+# Escape para exceções legítimas (hotfix de emergência, etc.):
+#   incluir o token  [no-story]  na mensagem (fica registrado no histórico)
+#
+# Tipos isentos (não alteram comportamento do produto):
+#   docs, chore, ci, test, style, build, revert
+#
+# Instalação (uma vez por clone):  git config core.hooksPath .githooks
+
+msg_file="$1"
+msg=$(cat "$msg_file")
+
+# Primeira linha (subject) — ignora linhas de comentário do git
+subject=$(printf '%s\n' "$msg" | grep -v '^#' | sed -n '1p')
+
+# Tipo conventional-commit (antes do ':' ou '(' )
+type=$(printf '%s' "$subject" | sed -n 's/^\([a-zA-Z]\{1,\}\).*$/\1/p' | tr '[:upper:]' '[:lower:]')
+
+case "$type" in
+  docs|chore|ci|test|style|build|revert)
+    exit 0 ;;
+esac
+
+# Merge commits passam direto
+case "$subject" in
+  "Merge "*) exit 0 ;;
+esac
+
+# Rastreabilidade presente?
+if printf '%s' "$msg" | grep -Eq '\[Story [0-9]+\.[0-9]+(\.[0-9]+)?\]|\[EPIC-[0-9]+\]|\[no-story\]'; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+
+  ✗ COMMIT BLOQUEADO — AIOX Constitution Art. III (Story-Driven Development)
+
+  Este commit altera código mas não referencia uma story nem um epic.
+
+  Adicione a rastreabilidade na mensagem, ex:
+      feat(ticket): redesign premium do ingresso [Story 0.10]
+      fix(api): corrige paginação admin [EPIC-001]
+
+  Exceção legítima (hotfix de emergência, etc.)? Inclua o token:
+      [no-story]
+  (fica registrado no histórico para auditoria)
+
+  Por que isto existe: 30 commits sem story em 2026-05-08 forçaram a
+  consolidação retroativa da Story 0.10. Este gate evita a recorrência.
+
+EOF
+exit 1
