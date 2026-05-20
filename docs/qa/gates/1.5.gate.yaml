@@ -1,0 +1,104 @@
+# QA Gate — Story 1.5 Workshop Guide GUIA-EVENTO-VMS.md
+# Reviewer: Quinn (@qa)
+# Date: 2026-05-20
+# Mode: LIGHT (docs-only microajuste)
+
+storyId: "1.5"
+storyTitle: "Workshop Guide: docs/GUIA-EVENTO-VMS.md (cenário VM puro)"
+verdict: PASS
+reviewer: "@qa (Quinn)"
+date: "2026-05-20"
+commit: "a754fbe"
+branch: "feature/1.5-vm-workshop-guide"
+deliverable: "docs/GUIA-EVENTO-VMS.md (714 linhas)"
+
+acceptance_criteria:
+  total: 11
+  passed: 11
+  failed: 0
+  details:
+    AC-1: { result: PASS, evidence: "714 linhas (target 400-700, +14 marginal). Estrutura espelha GUIA-EVENTO.md (header 4 blockquotes + TOC + 7 sections + 8 phases + tabela variáveis)" }
+    AC-2: { result: PASS, evidence: "8 fases obrigatórias (Fase 0..7) presentes nos headings linhas 167, 187, 199, 311, 377, 487, 551, 607. NOTA: story texto diz '7' (C-1 cosmetic)" }
+    AC-3: { result: PASS, evidence: "Navegação Portal-first; az cli apenas em Pós-jogo (deallocate); PowerShell dentro de VM via RDP OK" }
+    AC-4: { result: PASS, evidence: "Cobertura completa Story 1.1: 3 VMs Windows + NSGs + SQL Server install + bacpac restore + IIS+iisnode backend + IIS+ARR frontend + smoke + privacy check" }
+    AC-5: { result: PASS, evidence: "ASCII diagram 3-VMs com jump host (linhas 110-140); NSG matrix 3 linhas (linha ~145)" }
+    AC-6: { result: PASS, evidence: "Callouts consistentes: 📋 ✅ 💰 🔐 ⚠️ 💡 🧅 🆚 todos presentes" }
+    AC-7: { result: PASS, evidence: "Anti-hallucination OK — PowerShell IIS commands literal match com SIMPLIFICADO.md; .env baseado em .env.example; contagens 104/49/17 de audit" }
+    AC-8: { result: PASS, evidence: "TOC funcional no início (linhas 13-30) com 7 entries + sub-anchors para cada fase" }
+    AC-9: { result: PASS, evidence: "§6 Tabela de variáveis e segredos completa (anotações + .env + web.config)" }
+    AC-10: { result: PASS, evidence: "Custos B2s ~$30/mês × 3 = $90/mês explícito; alerta budget $30 na Fase 0; az vm deallocate na Fase 7 com callout 💰 forte" }
+    AC-11: { result: PASS, evidence: "Apenas 1 arquivo novo (docs/GUIA-EVENTO-VMS.md). Story file + QA report também novos mas são scaffolding squad. Source docs (GUIA-EVENTO, 1.1-1.4, DEPLOY*.md) intactos." }
+
+quality_checks:
+  - check: powershell_commands_literal_match
+    result: PASS
+    notes: "guide linhas 389-394 (vm-back) e 513-516 (vm-front) idênticos byte-a-byte a SIMPLIFICADO.md linhas 15-21"
+  - check: contagens_104_49_17
+    result: PASS
+    notes: "7 ocorrências confirmadas alinhadas com audit 2026-05-15"
+  - check: internal_links
+    result: PASS
+    notes: "4 links → 2 arquivos (GUIA-EVENTO.md × 3, DEPLOY_AZURE.md × 1), ambos existem"
+  - check: phase_count
+    result: PASS
+    notes: "8 fases presentes (Fase 0 a 7) — S-1 da @po resolvida no deliverable"
+  - check: style_consistency
+    result: PASS
+    notes: "Header + TOC + callouts + tabelas espelham PaaS modelo"
+  - check: ascii_diagrams
+    result: PASS
+    notes: "3-VMs diagram + jump host annotation + NSG matrix"
+  - check: bonus_evolution_section
+    result: PASS
+    notes: "§7 'Evolução de segurança' + tabela comparativa VM × PaaS — bonus não previsto, agrega valor"
+  - check: no_todos
+    result: PASS
+    notes: "Zero TODO/FIXME/TBD"
+
+issues:
+  - id: C-1
+    severity: LOW
+    category: cosmetic
+    description: "Story texto (AC-2) diz '7 fases obrigatórias' mas deliverable corretamente implementa 8 fases (0-7). Inconsistência no story, não no produto."
+    recommendation: "Opcional — @sm pode atualizar AC-2 do story para '8 fases' em refactor futuro. Change Log v1.2.0 do @dev já documenta a divergência."
+    blocking: false
+
+  - id: C-2
+    severity: LOW
+    category: scope_marginal
+    description: "Deliverable tem 714 linhas vs target 400-700 (+14, +2%). Excesso vem do §7 bônus + tabela comparativa final."
+    recommendation: "Aceitar — content completeness > corte artificial. §7 agrega valor pedagógico significativo."
+    blocking: false
+
+evidence:
+  static_checks:
+    line_count: 714
+    sections_count: 8
+    phases_count: 8
+    todos_count: 0
+    powershell_commands_matched: 8/8
+    contagens_correct: 7/7
+    internal_links_valid: 4/4
+  build: N/A  # Markdown only
+  playwright: N/A  # No UI
+  coderabbit: SKIPPED  # per memory feedback_squad_workflow (docs-only microajuste)
+  visual_inspection: PASS  # ASCII renderiza, TOC funcional
+
+memory_applied:
+  - "feedback_squad_workflow: light gate apropriado para docs-only microajuste"
+  - "feedback_use_squad_agents: @qa acionado para gate light"
+
+decisions_supported:
+  - "Escopo Story 1.1 only (não 1.1-1.4) — sustentado, guide focado e completo"
+  - "Jump host via vm-front (gratuito) — implementado claramente, alternativa Bastion mencionada como evolução futura"
+  - "Bacpac stale callout ⚠️ Fase 1 — implementado"
+  - "Tamanho target 400-700 — atingido com +2% marginal aceitável"
+
+handoff:
+  next_agent: "@devops (Gage)"
+  next_command: "*push"
+  rationale: |
+    PASS limpo, 2 concerns LOW não-bloqueadoras.
+    Branch feature/1.5-vm-workshop-guide tem 1 commit local (a754fbe) c/ 3 arquivos (deliverable + story update + PO report).
+    @devops adiciona o gate file novo (1.5.gate.yaml) + esta atualização do story (QA Results), push branch, PR contra main, squash merge.
+    Docs-only — NÃO dispara CD (workflows usam paths filter em fifa2026-api/** e Lovable/**, fora de docs/**).
