@@ -59,11 +59,11 @@ Ao final, você terá feito **com as suas próprias mãos**:
 | 3 | Migrar um site IIS para **Azure Web App** usando o **App Service Migration Assistant** |
 | 4 | Configurar **App Settings**, **VNet Integration** (permanente — boa prática) e **CORS** num Web App |
 | 5 | Resolver a pegadinha do **proxy reverso no App Service** (`applicationHost.xdt`) |
-| 6 | Migrar um banco SQL Server para **Azure SQL Database** com a **Azure SQL Migration extension** (Azure Data Studio + DMS) |
+| 6 | Migrar um banco SQL Server para **Azure SQL Database** via **`.bacpac`** (export/import) — e conhecer o **Azure DMS** para volumes grandes |
 | 7 | Executar um **cutover blue/green** com domínio próprio, **reaproveitando o certificado das VMs** (importado num Key Vault) — e conhecer a opção de **certificado gerenciado** |
 | 8 | **Comparar VM × PaaS** com números (custo, patch, escala, deploy) e desligar as VMs |
 
-> 🧠 **Filosofia:** **Portal-first** + **ferramentas assistidas**. CLI/PowerShell só onde a ferramenta pede (ex.: registrar o Integration Runtime) ou para desligar tudo no final. Você sai sabendo **qual ferramenta usar para cada tipo de carga** e **por quê**.
+> 🧠 **Filosofia:** **Portal-first** + **ferramentas assistidas**. CLI/PowerShell só onde necessário (ex.: atribuir uma role a um service principal, ou desligar tudo no final). Você sai sabendo **qual ferramenta usar para cada tipo de carga** e **por quê**.
 
 > ⏱️ **O que esperar de tempo:** ~1h30 a 2h. A maior parte é a ferramenta trabalhando (empacotar/publicar o site, mover os dados) — seu trabalho é configurar e validar.
 
@@ -79,7 +79,7 @@ Dois grupos: **ferramentas de migração** (rodam na sua máquina/VMs, são grat
 |---|---|---|---|
 | 🧮 **Azure Pricing / TCO Calculator** | Comparar custo VM × PaaS (o "porquê") | Navegador | Grátis |
 | 📦 **App Service Migration Assistant** | Avalia um site IIS e o publica num Web App | Instalado na VM de origem (`vm-bend`, `vm-fend`) | Grátis |
-| 🧪 **Azure Data Studio + Azure SQL Migration extension** | Avalia e migra o banco para Azure SQL (via Azure DMS) | Instalado na `vm-data` | Grátis (DMS offline é gratuito) |
+| 🧪 **SSMS + Portal (Import database)** | Exporta o banco em `.bacpac` e importa no Azure SQL | SSMS na `vm-data`; import no Portal | Grátis |
 
 > 🛰️ **E o Azure Migrate?** Ele é ótimo, mas o *discovery* completo exige instalar um **appliance** (uma VM/coletor) na rede — desproporcional para 2 VMs de workshop. As duas ferramentas acima são **standalone** e já trazem o *assessment* embutido, então **não usamos o appliance** aqui. Para o slide de "quanto eu economizo", a **Pricing/TCO Calculator** (sem appliance) é suficiente.
 
@@ -94,7 +94,7 @@ Tudo num **novo Resource Group** PaaS, em **Central India** (mesma região da ap
 | 🌐 **Web App frontend** | `app-prd-tk-fend-cin-001` | Substitui a `vm-fend` (SPA + proxy reverso) | incluso no plano |
 | 🗄️ **Azure SQL — servidor lógico** | `sql-prd-tk-cin-001` | "Endereço" do banco gerenciado (`*.database.windows.net`) | grátis (cobra o DB) |
 | 🗄️ **Azure SQL Database** | `FIFA2026Tickets` | Substitui o SQL Server da `vm-data` (**Basic**) | Basic ~$5/mês |
-| 🔁 **Azure Database Migration Service** | `dms-prd-tk-cin-001` | Motor gerenciado que move os dados (criado pela extension) | grátis (offline) |
+| 🔁 **Azure Database Migration Service** *(opcional)* | `dms-prd-tk-cin-001` | Migração gerenciada — alternativa ao `.bacpac` para volumes grandes | grátis (offline) |
 
 > 💰 **Custo total real do PaaS:** ~**$18/mês** (B1 + SQL Basic) se ficar ligado 24/7 — e diferente da VM, **não há o que "desligar"**; você **apaga o Resource Group** ao final do evento e o custo zera. Prorateado para um dia de evento, são **centavos**. Bem dentro do crédito da conta trial.
 
@@ -172,7 +172,7 @@ Tudo num **novo Resource Group** PaaS, em **Central India** (mesma região da ap
 | **Fase 2** | Assessment sem appliance (TCO + readiness das ferramentas) | 15 min |
 | **Fase 3** | Migrar **Backend** (API) → `app-prd-tk-bend` (App Service Migration Assistant) | 25 min |
 | **Fase 4** | Migrar **Frontend** → `app-prd-tk-fend` (+ `applicationHost.xdt`) | 20 min |
-| **Fase 5** | Migrar **Banco** → Azure SQL Database (SQL Migration extension, offline) | 30 min |
+| **Fase 5** | Migrar **Banco** → Azure SQL Database (import de `.bacpac`, offline) | 30 min |
 | **Fase 6** | Smoke test ponta a ponta (100% PaaS) | 10 min |
 | **Fase 7** | Decomissionar as VMs + comparação VM × PaaS | 10 min |
 | **Fase 8** | Rede privada: Private Endpoints + VNet Integration (só o front público) | 60 min |
@@ -193,7 +193,7 @@ Tudo num **novo Resource Group** PaaS, em **Central India** (mesma região da ap
 - [ ] **Ferramentas de migração** (baixe agora, instale nas fases indicadas):
   - **(Opcional) App Service Migration Assistant** — [appmigration.microsoft.com](https://appmigration.microsoft.com/). Só para ver o *assessment* (a publicação é por **zip deploy**, Fases 3.2/4.2). Se for usar, instala na `vm-bend`/`vm-fend`.
   - **Azure CLI** (se for publicar pela **Opção A**, na própria VM) — `winget install -e --id Microsoft.AzureCLI` ou [aka.ms/installazurecliwindows](https://aka.ms/installazurecliwindows). _Quem usar o **Cloud Shell** (Opção B) não precisa instalar nada._
-  - **Azure Data Studio** — [aka.ms/azuredatastudio](https://aka.ms/azuredatastudio) (instala na `vm-data` na Fase 5; a extension **Azure SQL Migration** é adicionada dentro dele).
+  - **SQL Server Management Studio (SSMS)** — [aka.ms/ssms](https://aka.ms/ssms) (na `vm-data`, para exportar o `.bacpac` na Fase 5). _O Azure Data Studio foi **aposentado em 28/02/2026** — não use mais._
 - [ ] **(Opcional) Projeto do Azure Migrate (em branco)** — só necessário se você for rodar o **App Service Migration Assistant** para ver o *assessment*. Portal → busca **Azure Migrate** → **Create project** → **Resource group:** `rg-prd-tik-paas-cin-001` · **Project name:** `migr-prd-tk-cin-001` · **Geography:** a mais próxima → **Create**.
 
 > ℹ️ **Por que é opcional agora:** neste guia a **publicação é feita por zip deploy** (Fases 3.2/4.2), que **não usa** o assistant nem o projeto. O projeto do Azure Migrate só entra **se você quiser rodar o assistant pelo valor didático do assessment** — e, nesse caso, ele é **pré-requisito**: a versão atual do assistant exige um projeto na assinatura (mesmo para app único) e **trava sem ele** na tela "Azure Migrate Hub". O projeto fica **em branco** — sem appliance, sem discovery; é só o "guarda-chuva" do assessment. Como a API é **Node**, o assistant **só assessa, não publica** (ver Fase 3.2) — por isso o deploy real é sempre o zip.
@@ -222,7 +222,7 @@ Mesmo padrão `<tipo>-<ambiente>-<carga>-<região>-<instância>` da fase VM. **U
 | Web App frontend | `app-prd-tk-fend-cin-001` | Central India | **nome global** |
 | Azure SQL (servidor lógico) | `sql-prd-tk-cin-001` | Central India | **nome global** |
 | Azure SQL Database | `FIFA2026Tickets` | — | mesmo nome do banco da VM |
-| Database Migration Service | `dms-prd-tk-cin-001` | Central India | criado pela extension na Fase 5 |
+| Database Migration Service *(opcional)* | `dms-prd-tk-cin-001` | Central India | só se usar a migração assistida (DMS) em vez do `.bacpac` (Fase 5) |
 | Projeto Azure Migrate (em branco) | `migr-prd-tk-cin-001` | Geography mais próxima | **opcional** — só se rodar o assistant para o assessment; sem appliance/discovery. Publicação real é por zip deploy |
 | Key Vault | `kv-prd-tk-cin-001` | Central India | **nome global**; guarda o certificado das VMs (.pfx) p/ o domínio customizado (Fase 4.5) |
 
@@ -261,9 +261,9 @@ Mesmo padrão `<tipo>-<ambiente>-<carga>-<região>-<instância>` da fase VM. **U
 
 O *assessment* de compatibilidade do site vem **embutido** na ferramenta — você vai vê-lo no começo da Fase 3 (o assistant roda um **readiness check** antes de publicar). Não há passo separado aqui; é só saber que **a avaliação acontece dentro da ferramenta**.
 
-#### 2.3 Readiness do banco (SQL Migration extension)
+#### 2.3 Readiness do banco
 
-Idem para o banco: a extension tem uma etapa **Assess** que lista *blocking issues* e *warnings* da migração para Azure SQL Database. Você a executa no início da Fase 5.
+Para o destino **Azure SQL Database**, as incompatibilidades de schema aparecem no **próprio import do `.bacpac`** (a Fase 5 falha com mensagem clara se algo não for suportado). Para volumes grandes, o **Azure DMS** traz um passo **Assess** dedicado. Para este schema simples, **não há bloqueios esperados**.
 
 > ✅ **Pronto quando:** você tem os dois números de custo anotados e entende que os relatórios de compatibilidade do app e do banco virão **dentro** das ferramentas (Fases 3 e 5).
 
@@ -526,9 +526,11 @@ Do seu computador, abra **`https://www.<seu-domínio>`** (com cadeado válido):
 
 ### Fase 5 — Migrar o Banco → Azure SQL Database
 
-> 🎯 **Objetivo:** substituir o SQL Server da `vm-data` por um **Azure SQL Database**, usando a **Azure SQL Migration extension** do Azure Data Studio. Esta é a parte mais "de verdade" da migração — mover **dados**, não código.
+> 🎯 **Objetivo:** substituir o SQL Server da `vm-data` por um **Azure SQL Database**, migrando schema + dados via **`.bacpac`** (export/import). Esta é a parte mais "de verdade" da migração — mover **dados**, não código.
 
-> 🟦🟩 **Sobre "downtime mínimo":** para o destino **Azure SQL Database**, a extension faz migração **offline** (o modo *online*, com sincronização contínua, só existe para Managed Instance / SQL em VM). Como nosso banco é **pequeno** (104 jogos, ~3 MB) e o compute (front+API) **já está em PaaS e no ar**, o downtime real é só a **janela curta de carga** + o reapontar da connection string. É o padrão **blue/green**: o ambiente novo sobe ao lado, e o corte é rápido.
+> ⚠️ **Mudança de ferramenta:** o **Azure Data Studio foi aposentado (28/02/2026)** e a *Azure SQL Migration extension* foi descontinuada. Para um banco pequeno como o nosso, o caminho atual e mais simples é o **`.bacpac`**; para volumes grandes ou migração contínua, usa-se o **Azure Database Migration Service (DMS)** pelo Portal (alternativa assistida abaixo).
+
+> 🟦🟩 **Sobre "downtime mínimo":** o import do `.bacpac` é **offline**. Como o banco é **pequeno** (104 jogos, ~3 MB) e o compute (front+API) **já está em PaaS e no ar**, o downtime real é só a **janela curta de import** + o reapontar da connection string. É o padrão **blue/green**: o ambiente novo sobe ao lado, e o corte é rápido.
 
 #### 5.1 Provisionar o Azure SQL Database (Portal)
 
@@ -540,26 +542,22 @@ Do seu computador, abra **`https://www.<seu-domínio>`** (com cadeado válido):
 
 > 💡 **"Allow Azure services" liga o quê?** Cria uma regra de firewall (`0.0.0.0`) que deixa **outros serviços Azure** (como o seu Web App backend) conectarem ao banco pelo endpoint público. O **"current client IP"** libera o **seu** IP para a migração rodar.
 
-#### 5.2 Instalar Azure Data Studio + a extension na `vm-data`
+#### 5.2 Obter o `.bacpac` do banco
 
-1. **RDP na `vm-data`** (via jump host `vm-fend`).
-2. Instale o **Azure Data Studio** (baixado na Fase 0).
-3. Em Azure Data Studio → **Extensions** (Ctrl+Shift+X) → busque **"Azure SQL Migration"** → **Install**.
+O `.bacpac` é um pacote único com **schema + dados**. Você já tem um pronto — e pode reusá-lo:
 
-> 💡 **Por que rodar na própria `vm-data`?** A `vm-data` é privada e tem o SQL como `localhost`. Rodando a ferramenta **nela**, a conexão de origem é local e o **Integration Runtime** (próximo passo) sai pela internet (443) direto para o Azure — sem expor a VM.
+- **Já existe no Blob:** `FIFA2026Tickets.bacpac` está publicado no container público `copa2026` (o mesmo da fase VM): `https://stotfteccopaazure.blob.core.windows.net/copa2026/FIFA2026Tickets.bacpac`. É a **fonte da verdade** do banco.
+- **Ou exporte do SQL da VM** (se quiser o estado atual da `vm-data`): RDP na `vm-data` → **SSMS** → clique-direito no banco `FIFA2026Tickets` → **Tasks → Export Data-tier Application** → salve o `.bacpac`.
 
-#### 5.3 Rodar o wizard de migração (Assess → schema → migrate)
+> 💡 **SSMS no lugar do Azure Data Studio.** O ADS foi aposentado; o **SQL Server Management Studio (SSMS)** continua sendo a ferramenta para exportar/importar `.bacpac` e administrar o SQL. Para um banco de ~3 MB, exportar/importar leva segundos.
 
-1. Em Azure Data Studio, conecte ao SQL de origem: **Server:** `localhost` · **SQL Login:** `adminsql` / `Partiunuvem@2026`.
-2. Clique com o direito no servidor → **Manage** → painel **Azure SQL Migration** → **Migrate to Azure SQL**.
-3. **Selecione o banco** `FIFA2026Tickets`.
-4. **Assess** → revise *issues/warnings* (o *assessment* do banco da Fase 2). Para Azure SQL Database, espere avisos leves; não deve haver bloqueio para este schema.
-5. **Azure SQL target:** faça **Sign in**, escolha a subscription, o servidor `sql-prd-tk-cin-001` e o banco `FIFA2026Tickets`.
-6. **Migration mode:** **Offline** (única opção para Azure SQL Database).
-7. **Integration Runtime:** crie um **Database Migration Service** (`dms-prd-tk-cin-001`) e, quando pedido, **instale o self-hosted Integration Runtime na `vm-data`** (o wizard dá o link do instalador + as **2 chaves de autenticação**; cole uma chave para registrar). Ele conecta a origem local ao Azure.
-8. **Start migration** → o serviço **cria o schema** no Azure SQL e depois **carrega os dados** (offline). Acompanhe o progresso no próprio painel.
+#### 5.3 Importar o `.bacpac` no Azure SQL Database (Portal)
 
-> 🧩 **Plano B (mais simples, você já conhece):** se o Integration Runtime/DMS travar no tempo do evento, use o **`.bacpac`** — Portal → `sql-prd-tk-cin-001` → **Import database** → aponte o `FIFA2026Tickets.bacpac` (o mesmo da fase VM, no Blob). É offline também, mas dispensa IR/DMS. A extension é o caminho "assistido de verdade"; o bacpac é o atalho.
+1. Portal → o **servidor** `sql-prd-tk-cin-001` (o *SQL server*, não o database) → **Import database**.
+2. **Storage:** aponte para o blob com o `FIFA2026Tickets.bacpac` (se o seu `.bacpac` ainda não estiver numa storage account acessível, faça upload de um) · **Pricing tier:** **Basic** · **Database name:** `FIFA2026Tickets` · **Authentication:** `sqladmin` / a senha do passo 5.1.
+3. **OK** → acompanhe em **Import/Export history** do servidor até **Succeeded** (segundos, para este tamanho).
+
+> 🧩 **Alternativa assistida (opcional, "de verdade"):** o **Azure Database Migration Service (DMS)** faz a migração **gerenciada** — Portal → **Azure Database Migration Service** → novo projeto **SQL Server → Azure SQL Database** (offline). Como o banco é minúsculo, o `.bacpac` é mais direto; o **DMS é o que se usa em volumes grandes ou migração contínua**. _(O antigo fluxo pela "Azure SQL Migration extension" do Azure Data Studio **não existe mais** — ADS aposentado em 28/02/2026.)_
 
 #### 5.4 Reapontar o backend para o Azure SQL (mantendo a VNet Integration)
 
@@ -638,7 +636,7 @@ Quando não precisar mais de nada:
 ```bash
 az group delete --name rg-prd-tik-paas-cin-001 --yes --no-wait
 ```
-Apaga os 2 Web Apps + o plano + o Azure SQL + o DMS. **Custo zero a partir daqui.**
+Apaga os 2 Web Apps + o plano + o Azure SQL (+ o DMS, se você tiver criado). **Custo zero a partir daqui.**
 
 #### 7.3 A lição: VM × PaaS lado a lado
 
@@ -785,7 +783,7 @@ Ao privatizar, duas tarefas mudam — e isso é **esperado**:
 | `/api/health/db` dá **ELOGIN** | `User Id`/`Password` da Connection String `DefaultConnection` não batem com o destino | Antes da Fase 5: `adminsql`/`Partiunuvem@2026` (VM). Depois: `sqladmin`/senha do Azure SQL |
 | App Service Migration Assistant **não acha o site** | Rodando fora da VM de origem, ou IIS parado | Instale e rode o assistant **dentro** da `vm-bend`/`vm-fend`; confirme o site no IIS Manager |
 | Mudei App Setting e **nada mudou** | Cache de instância | App Settings reiniciam o app, mas force um **Restart** se preciso. (No App Service **não** existe `iisreset`.) |
-| Migração do banco trava no **Integration Runtime** | IR não registrado/sem saída 443 | Reinstale o IR na `vm-data` com a chave do wizard; ou use o **Plano B do `.bacpac`** (5.3) |
+| **Import do `.bacpac`** falha (Fase 5) | `.bacpac` inacessível pela storage, ou tier/credenciais erradas | Confirme o blob/storage acessível, o **Pricing tier** e `sqladmin`/senha; veja **Import/Export history** do servidor para a mensagem exata |
 | Domínio customizado **não valida** | Registro `asuid` TXT/CNAME não propagou | `Resolve-DnsName asuid.www.<domínio> -Type TXT -Server 8.8.8.8`; aguarde a propagação e revalide |
 | **(Fase 8)** `/api/*` dá **502/timeout** após desligar o público da API | Front sem **Route All**, ou zona `privatelink.azurewebsites.net` não linkada | Confirme VNet Integration do front + `WEBSITE_VNET_ROUTE_ALL=1` + zona linkada à VNet (8.8) |
 | **(Fase 8)** `/api/health/db` dá **ETIMEOUT** após desligar o público do SQL | API sem VNet Integration/Route All, ou zona `privatelink.database.windows.net` não linkada | Reveja a Fase 8.6 (integração + Route All + zona DNS) |
