@@ -13,10 +13,20 @@ interface ImportMetaEnv {
    * NUNCA hardcoded.
    */
   readonly VITE_FUNCTION_V2_URL?: string;
-  /** Application (client) ID da App Registration SPA no tenant Entra workforce. */
+  /** Application (client) ID da App Registration SPA no tenant Entra workforce (v1/2.3). */
   readonly VITE_ENTRA_CLIENT_ID?: string;
-  /** GUID do tenant Entra workforce do aluno. */
+  /** GUID do tenant Entra workforce do aluno (v1/2.3). */
   readonly VITE_ENTRA_TENANT_ID?: string;
+  /**
+   * Story 2.11 / Quartas — Authority COMPLETA do tenant CIAM (Microsoft Entra External
+   * ID), ex.: https://contoso.ciamlogin.com/ . É a authority do CLIENTE final (ADE-007
+   * Inv 1/2) — NÃO login.microsoftonline.com. O MSAL deriva o host desta URL para
+   * knownAuthorities (obrigatório p/ CIAM/B2C). Valor completo plugado pelo instrutor
+   * (tenant pré-provisionado, handoff §3). NUNCA hardcoded.
+   */
+  readonly VITE_CIAM_AUTHORITY?: string;
+  /** Application (client) ID da App Registration SPA criada pelo aluno no tenant CIAM. */
+  readonly VITE_CIAM_CLIENT_ID?: string;
   /** Scope exposto pela App Registration (ex.: api://<client-id>/purchase.write). */
   readonly VITE_ENTRA_SCOPE?: string;
   /** Base URL do gateway YARP v2 (Container App). Ex.: https://gateway-xy.azurecontainerapps.io */

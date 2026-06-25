@@ -4,6 +4,29 @@
 
 ---
 
+## 🟢 ATUALIZAÇÃO 2026-06-25 (sessão 2) — FUNDAÇÃO DE PLANEJAMENTO FECHADA
+
+A sessão 2 NÃO construiu o lab (decisão do owner: parar no planejamento, fazer o build noutra sessão com HML à mão). Toda a **fundação pré-build** ficou pronta e rastreável. **Próxima sessão = BUILD (§5.4)**, sem mais decisões de planejamento pendentes.
+
+**Decisões do owner batidas nesta sessão:**
+- **Push TFTEC:** ADIADO (segue fork only).
+- **Formato:** **SESSÃO ÚNICA** (NÃO dividir A/B), migração mantida hands-on. Estouro de tempo ~7,5–9,5h aceito (lab "longo", pausa natural ao fim do bloco cliente CIAM). → **§4 abaixo está RESOLVIDA.**
+- **App Roles:** apenas **`Admin`** (uma role).
+- **Branch:** nova dedicada **`phase-04-quartas`** (NÃO reusar `phase-03-identity`); @devops confirma slot no push.
+- **Migração:** mecanismo decidido pela @data-engineer (ver doc abaixo).
+
+**Artefatos de fundação criados/atualizados (todos commitáveis, nada commitado ainda):**
+- `docs/architecture/ade-007-identity-external-id.md` **v1.1** — supersede ADE-005. Inv 3 emendada: **DOIS eixos de `entra_oid`** — `purchases.entra_oid` (compra, transacional, **zero-DDL**) e `users.entra_oid` (cadastro, durável, **1 migration aditiva**). Tese "issuer-agnóstico / só muda authority" intacta.
+- `docs/architecture/migration-v1-ciam-design.md` (@data-engineer) — mecanismo da migração: **self-service sign-up no CIAM (mesmo email) + `UPDATE users SET entra_oid=@oid WHERE email=@email AND entra_oid IS NULL`** (idempotente). bcrypt v1 NÃO importável → vira a lição (credencial nova via Google/OTP; bcrypt intacto). DDL pronta no §1.
+- `docs/stories/2.11.story.md` — **story única das Quartas, status Ready** (GO 9/10 do @po), 19 ACs rastreáveis, **0 "a confirmar" residual**. (NÃO re-draftar; 2.3 segue Done/histórica.)
+- Blueprint (`docs/workshops/2026-blueprint-living-lab-azure.md`) e EPIC-002 (`docs/epics/EPIC-002-living-lab-workshop.md`) propagados: identidade dois-mundos, Risco #2 MITIGADO (não eliminado), Risco #7 carrega o estouro de tempo.
+
+**Build da próxima sessão (§5.4) — pré-requisito de código:** criar `fifa2026-api/database/migrations/phase-04-ciam-link.sql` (DDL no `migration-v1-ciam-design.md` §1), `authV2.ts` authority→`ciamlogin.com`, gateway `Program.cs` issuer/aud do CIAM (+ 2º esquema para admin), App Settings. Depois os 6 artefatos de workshop no padrão `docs/workshops/phase-02/`. **@po já liberou; não precisa re-validar a story** (a menos que o build expanda escopo).
+
+> ⚠️ **Ponto de atenção para o build (levantado pelo @po):** o admin usa um **2º `AddJwtBearer`** (CIAM cliente + workforce admin) — ASP.NET Core exige policy de seleção de esquema ou rotas distintas por esquema. Não é "só trocar a string" no caso admin; @architect deve cobrir no quality gate (`auth-flow-validation`).
+
+---
+
 ## 1. O que está PRONTO (Oitavas / F1 + base)
 
 - **Story 2.10 (compra multi-item · fan-out)** — `Done` (QA CONCERNS resolvido). 1 POST do carrinho → N mensagens no Service Bus → N consumidores → N gravações. Backward-compat (single shape) preservado. Sem migration.

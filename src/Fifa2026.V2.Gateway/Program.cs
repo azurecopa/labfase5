@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Threading.RateLimiting;
 using Fifa2026.V2.Gateway.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -149,80 +150,213 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader());
 });
 
-// -----------------------------------------------------------------------------
-// Story 2.3 AC-6 / AC-12 — Validação de JWT Entra ATIVADA no gateway YARP
-// (ADE-004 Inv 4 / ADE-005 Inv 4). O placeholder de F2 ganha vida: AddJwtBearer
-// valida iss/aud/assinatura/expiração contra o discovery do issuer Entra workforce.
+// =============================================================================
+// Story 2.11 / Quartas — IDENTIDADE DOIS-MUNDOS: cliente CIAM + admin workforce
+// (ADE-007 Inv 1/2/5/7, SUPERSEDE ADE-005). O gateway YARP valida DOIS issuers de
+// forma issuer-agnóstica (ADE-004 Inv 4 preservada): o cliente final pelo Microsoft
+// Entra External ID (CIAM, ciamlogin.com) e o admin/operador pelo Entra ID workforce
+// (login.microsoftonline.com).
 //
-// CARRY-FORWARD M-1 (gate S2.2) — FAIL-CLOSED: o tenant NÃO tem default "common".
-// "common" aceitaria tokens de QUALQUER tenant Entra (multi-tenant) — brecha de
-// segurança. O tenant é configuração OBRIGATÓRIA: ausência → a app não sobe.
-// O issuer e o audience são validados EXPLICITAMENTE (ValidIssuer / ValidAudiences),
-// não apenas inferidos do Authority (ADE-005 Inv 1).
+// ⚠️ NÃO é "só trocar a string" da authority. Para aceitar DOIS issuers num mesmo
+// pipeline, registramos DOIS handlers JwtBearer concretos ("Ciam" e "Admin") e um
+// PolicyScheme "Selector" que, a cada request, inspeciona o issuer NÃO-validado do
+// bearer e ENCAMINHA (ForwardDefaultSelector) ao handler concreto correto. O handler
+// escolhido então valida iss/aud/assinatura/lifetime do jeito normal (fail-closed).
+//
+// Por que selector por issuer (e não dois schemes "tentados em sequência")?
+//   Encadear schemes faria o 1º handler logar erro de validação para todo token do
+//   2º issuer (ruído + risco de challenge ambíguo). O selector roteia 1:1 pelo issuer,
+//   então cada token é validado pelo handler do SEU mundo — limpo e determinístico.
+//
+// CARRY-FORWARD M-1 (gate S2.2) — FAIL-CLOSED em AMBOS os mundos: nenhum tenant tem
+// default "common" (aceitaria tokens de qualquer tenant). Tenant E client são
+// configuração OBRIGATÓRIA; ausência → a app não sobe. iss/aud validados
+// EXPLICITAMENTE (ValidIssuer/ValidAudiences), não só inferidos do Authority.
 //
 // Config requerida (App Settings do Container App, sem valores reais no repo):
-//   EntraTenantId  — GUID do tenant workforce do aluno (Portal → Entra ID → Overview)
-//   EntraClientId  — Application (client) ID da App Registration SPA (= aud do token)
-// -----------------------------------------------------------------------------
-var entraTenantId = builder.Configuration["EntraTenantId"]
-    // Compat: aceita a chave Jwt:TenantId herdada de F2, mas SEM default "common".
-    ?? builder.Configuration["Jwt:TenantId"];
-var entraClientId = builder.Configuration["EntraClientId"]
-    ?? builder.Configuration["Jwt:Audience"];
+//   Jwt:CiamTenantId  — GUID do tenant CIAM (Entra External ID)
+//   Jwt:CiamClientId  — Application (client) ID da App Reg SPA no CIAM (= aud do token cliente)
+//   Jwt:CiamAuthority — (opcional) authority CIAM completa override; default derivado:
+//                       https://<CiamTenantId>.ciamlogin.com/<CiamTenantId>/v2.0
+//   Jwt:AdminTenantId — GUID do tenant workforce (admin)
+//   Jwt:AdminClientId — Application (client) ID da App Reg admin (= aud do token admin)
+// =============================================================================
+const string CiamScheme = "Ciam";    // cliente final (Entra External ID / CIAM)
+const string AdminScheme = "Admin";  // admin/operador (Entra ID workforce + App Roles)
+const string SelectorScheme = "Selector"; // PolicyScheme que roteia pelo issuer
 
-if (string.IsNullOrWhiteSpace(entraTenantId) ||
-    string.Equals(entraTenantId, "common", StringComparison.OrdinalIgnoreCase))
-{
-    // Fail-closed: recusa subir com tenant ausente ou multi-tenant ("common").
-    throw new InvalidOperationException(
-        "Configuração de identidade ausente/insegura: defina 'EntraTenantId' com o GUID " +
-        "do tenant workforce (não use 'common' — aceitaria tokens de qualquer tenant). " +
-        "Story 2.3 AC-6 / carry-forward M-1 do gate S2.2.");
-}
+// --- Config CIAM (cliente) — fail-closed ---
+var ciamTenantId = builder.Configuration["Jwt:CiamTenantId"];
+var ciamClientId = builder.Configuration["Jwt:CiamClientId"];
+var ciamAuthorityOverride = builder.Configuration["Jwt:CiamAuthority"];
 
-if (string.IsNullOrWhiteSpace(entraClientId))
+if (string.IsNullOrWhiteSpace(ciamTenantId) ||
+    string.Equals(ciamTenantId, "common", StringComparison.OrdinalIgnoreCase))
 {
     throw new InvalidOperationException(
-        "Configuração de identidade ausente: defina 'EntraClientId' com o Application " +
-        "(client) ID da App Registration SPA (= audience esperado do access token). " +
-        "Story 2.3 AC-6.");
+        "Configuração de identidade do CLIENTE ausente/insegura: defina 'Jwt:CiamTenantId' " +
+        "com o GUID do tenant CIAM (Entra External ID; não use 'common'). " +
+        "Story 2.11 AC-5 / ADE-007 Inv 1.");
 }
 
-// Authority v2.0 (token v2.0 traz claim `oid`). O issuer EXATO esperado é derivado
-// do tenant — validado explicitamente abaixo (não confiamos só no metadata).
-var entraAuthority = $"https://login.microsoftonline.com/{entraTenantId}/v2.0";
-var entraIssuerV2 = $"https://login.microsoftonline.com/{entraTenantId}/v2.0";
+if (string.IsNullOrWhiteSpace(ciamClientId))
+{
+    throw new InvalidOperationException(
+        "Configuração de identidade do CLIENTE ausente: defina 'Jwt:CiamClientId' com o " +
+        "Application (client) ID da App Registration SPA no tenant CIAM (= audience do " +
+        "access token do cliente). Story 2.11 AC-5.");
+}
 
-// O esquema "Entra" é também o DEFAULT (authenticate + challenge). Em F2 o handler
-// foi registrado sob "Entra" mas o default ficou "Bearer" — inofensivo enquanto as
-// rotas eram anônimas; com RequireAuthorization() em F3 o default precisa apontar
-// para o esquema que existe, senão o challenge falha (No DefaultChallengeScheme).
-const string EntraScheme = "Entra";
+// Authority CIAM v2.0. Para Entra External ID o host é <tenant>.ciamlogin.com (NÃO
+// login.microsoftonline.com — esse é o erro clássico das Quartas, ADE-007 Consequências).
+// Discovery: https://<tenant>.ciamlogin.com/<tenantId>/v2.0/.well-known/openid-configuration
+// (validado contra docs Microsoft Entra External ID — AC-19). O issuer emitido pelo
+// CIAM em tokens v2.0 tem a forma https://<tenantId>.ciamlogin.com/<tenantId>/v2.0.
+// Permitimos override completo via Jwt:CiamAuthority quando o tenant do instrutor
+// usar um subdomínio nomeado (ex.: contoso.ciamlogin.com) em vez do GUID.
+var ciamAuthority = !string.IsNullOrWhiteSpace(ciamAuthorityOverride)
+    ? ciamAuthorityOverride
+    : $"https://{ciamTenantId}.ciamlogin.com/{ciamTenantId}/v2.0";
+var ciamIssuerV2 = ciamAuthority.TrimEnd('/');
+
+// --- Config Admin (workforce) — fail-closed ---
+var adminTenantId = builder.Configuration["Jwt:AdminTenantId"];
+var adminClientId = builder.Configuration["Jwt:AdminClientId"];
+
+if (string.IsNullOrWhiteSpace(adminTenantId) ||
+    string.Equals(adminTenantId, "common", StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException(
+        "Configuração de identidade do ADMIN ausente/insegura: defina 'Jwt:AdminTenantId' " +
+        "com o GUID do tenant workforce do admin (não use 'common'). " +
+        "Story 2.11 AC-12/AC-13 / ADE-007 Inv 5.");
+}
+
+if (string.IsNullOrWhiteSpace(adminClientId))
+{
+    throw new InvalidOperationException(
+        "Configuração de identidade do ADMIN ausente: defina 'Jwt:AdminClientId' com o " +
+        "Application (client) ID da App Registration admin (= audience do token admin). " +
+        "Story 2.11 AC-12.");
+}
+
+var adminAuthority = $"https://login.microsoftonline.com/{adminTenantId}/v2.0";
+var adminIssuerV2 = $"https://login.microsoftonline.com/{adminTenantId}/v2.0";
+
+// Hosts de issuer usados pelo selector para rotear o token ao handler do seu mundo.
+const string CiamIssuerHost = "ciamlogin.com";
+const string WorkforceIssuerHost = "login.microsoftonline.com";
+
 builder.Services
-    .AddAuthentication(EntraScheme)
-    .AddJwtBearer(EntraScheme, options =>
+    // O DEFAULT é o PolicyScheme "Selector": toda autenticação passa por ele, que
+    // decide (por issuer) qual handler concreto vai validar o token de fato.
+    .AddAuthentication(SelectorScheme)
+    .AddJwtBearer(CiamScheme, options =>
     {
-        // Discovery (.well-known/openid-configuration) fornece JWKS para validar a
-        // assinatura RS256. iss/aud/lifetime são checados EXPLICITAMENTE abaixo.
-        options.Authority = entraAuthority;
-        options.Audience = entraClientId;
+        // CLIENTE — discovery do CIAM (ciamlogin.com). JWKS validam a assinatura RS256;
+        // iss/aud/lifetime EXPLÍCITOS abaixo (fail-closed, não confia só no metadata).
+        options.Authority = ciamAuthority;
+        options.Audience = ciamClientId;
         options.RequireHttpsMetadata = true;
         options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
         {
             ValidateIssuer = true,
-            // ValidIssuer EXPLÍCITO (M-1): só aceita o issuer do tenant configurado.
-            ValidIssuer = entraIssuerV2,
+            ValidIssuer = ciamIssuerV2,
             ValidateAudience = true,
-            // ValidAudiences EXPLÍCITO (M-1): aceita o client id e o App ID URI
-            // (api://<client-id>) — ambos formatos de `aud` que o Entra emite p/ SPA.
-            ValidAudiences = new[] { entraClientId, $"api://{entraClientId}" },
+            // aud do CIAM pode ser o client id ou o App ID URI (api://<client-id>).
+            ValidAudiences = new[] { ciamClientId, $"api://{ciamClientId}" },
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            // Sem tolerância extra de relógio: token expirado → 401 (AC-12).
+            // Sem tolerância de relógio: token expirado → 401 (AC-6).
             ClockSkew = TimeSpan.Zero
         };
+    })
+    .AddJwtBearer(AdminScheme, options =>
+    {
+        // ADMIN — discovery do workforce (login.microsoftonline.com). Mesma mecânica de
+        // validação (ADE-004 issuer-agnóstico), só muda a authority/issuer/aud.
+        options.Authority = adminAuthority;
+        options.Audience = adminClientId;
+        options.RequireHttpsMetadata = true;
+        // Mantém os nomes de claim originais do token (não renomeia "roles" para a URI
+        // longa do WS-Federation). Combinado com RoleClaimType="roles" abaixo, faz o
+        // RequireRole("Admin") casar a App Role emitida pelo Entra na claim "roles".
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = adminIssuerV2,
+            ValidateAudience = true,
+            ValidAudiences = new[] { adminClientId, $"api://{adminClientId}" },
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            // O Entra emite App Roles na claim "roles" (id-token-claims-reference). Mapeia
+            // "roles" como o role claim type para que RequireRole("Admin") seja satisfeito.
+            RoleClaimType = "roles",
+            ClockSkew = TimeSpan.Zero
+        };
+    })
+    .AddPolicyScheme(SelectorScheme, "Bearer issuer selector", options =>
+    {
+        // Para CADA request: lê o issuer NÃO-validado do bearer e encaminha ao handler
+        // concreto do mundo correto. A validação real (assinatura/iss/aud/lifetime) é
+        // feita pelo handler escolhido — o selector NÃO confia no issuer lido aqui, só
+        // o usa para ROTEAR. Se nada casar, default = caminho do cliente (CIAM).
+        options.ForwardDefaultSelector = httpContext =>
+        {
+            var authHeader = httpContext.Request.Headers.Authorization.ToString();
+            if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                var token = authHeader["Bearer ".Length..].Trim();
+                var handler = new JwtSecurityTokenHandler();
+                if (handler.CanReadToken(token))
+                {
+                    var issuer = handler.ReadJwtToken(token).Issuer ?? string.Empty;
+                    if (issuer.Contains(CiamIssuerHost, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return CiamScheme;
+                    }
+                    if (issuer.Contains(WorkforceIssuerHost, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return AdminScheme;
+                    }
+                }
+            }
+
+            // Default: caminho do cliente (CIAM). Token ausente/ilegível cai aqui e o
+            // handler CIAM responde 401 (fail-closed — nenhuma rota fica anônima).
+            return CiamScheme;
+        };
     });
-builder.Services.AddAuthorization();
+
+// Autorização: a policy default exige usuário autenticado por QUALQUER um dos dois
+// handlers concretos (o selector já roteou). Uma rota administrativa separada usa a
+// policy "AdminOnly", que exige o esquema Admin E a claim de role "Admin" (App Role
+// construída hands-on no Bloco 3 — ADE-007 Inv 5; decisão do owner: única role "Admin").
+const string AdminRole = "Admin";
+const string AdminOnlyPolicy = "AdminOnly";
+builder.Services.AddAuthorization(options =>
+{
+    // Default (rotas v2 do cliente): basta estar autenticado (CIAM ou Admin).
+    options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+            CiamScheme, AdminScheme)
+        .RequireAuthenticatedUser()
+        .Build();
+
+    // AdminOnly: rota administrativa. Exige usuário autenticado E a App Role "Admin".
+    // NÃO fixamos o esquema aqui de propósito: deixamos o PolicyScheme selector
+    // autenticar (CIAM→Ciam, workforce→Admin). Assim:
+    //   - token workforce com role "Admin"  → autenticado + role presente → 200;
+    //   - token CIAM (cliente) válido        → AUTENTICADO mas sem a role → 403 (não 401);
+    //   - sem token / token inválido         → não autenticado → 401.
+    // Só o esquema Admin (workforce) carrega a claim "roles"; um cliente CIAM nunca a
+    // tem, então a separação dos dois mundos é preservada (a App Role só existe no
+    // workforce — ADE-007 Inv 5). Fixar AddAuthenticationSchemes(Admin) daria 401 (e
+    // não 403) ao cliente CIAM, perdendo a distinção autenticado-mas-não-autorizado.
+    options.AddPolicy(AdminOnlyPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireRole(AdminRole));
+});
 
 // Observabilidade de borda (AC-11 / ADE-000 Inv 5) — App Insights se a connection
 // string estiver presente (APPLICATIONINSIGHTS_CONNECTION_STRING). No-op sem ela.
@@ -235,17 +369,27 @@ app.UseCors(CorsPolicy);          // 1. CORS
 app.UseRateLimiter();             // 2. Rate limiter (429)
 app.UseMiddleware<XCacheMiddleware>(); // 2.5 default X-Cache: MISS (antes do cache)
 app.UseOutputCache();             // 3. Output cache (30s) — seta X-Cache: HIT no store
-app.UseAuthentication();          // 4. Authentication (JWT placeholder F2-anônimo)
+app.UseAuthentication();          // 4. Authentication (selector roteia CIAM vs Admin)
 app.UseAuthorization();           // 5. Authorization
 
 // Endpoint de saúde para smoke test / Container App health probe.
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "gateway-yarp" }));
 
-// 6. MapReverseProxy com rate-limit em todas as rotas, cache na rota GET e, agora
-//    em F3, EXIGÊNCIA de JWT Entra válido em todas as rotas v2 (AC-6).
+// Story 2.11 / Quartas (AC-12/AC-13) — rota administrativa demonstrativa protegida pela
+// policy "AdminOnly" (esquema Admin/workforce + App Role "Admin"). Mostra a separação
+// dos dois mundos NO PRÓPRIO gateway: um token CIAM (cliente), mesmo válido, é roteado
+// pelo selector ao esquema Ciam e NÃO satisfaz AdminOnly → 403. Só um token workforce
+// com role "Admin" passa. As rotas de cliente (proxy abaixo) seguem na DefaultPolicy
+// (qualquer um dos dois esquemas autenticado). Em produção, rotas admin reais do proxy
+// usariam .RequireAuthorization(AdminOnlyPolicy) no cluster correspondente.
+app.MapGet("/admin/ping", () => Results.Ok(new { status = "ok", scope = "admin" }))
+    .RequireAuthorization(AdminOnlyPolicy);
+
+// 6. MapReverseProxy com rate-limit em todas as rotas, cache na rota GET e EXIGÊNCIA
+//    de JWT válido (CIAM OU workforce — DefaultPolicy) em todas as rotas v2.
 //    Sem Bearer válido → 401 (UseAuthentication/UseAuthorization rejeitam antes do
-//    proxy). Token expirado/issuer errado/aud errado → 401 (AC-12). Esta linha é o
-//    "ganhar vida" do placeholder comentado de F2.
+//    proxy). Token expirado/issuer errado/aud errado → 401 (AC-6). O selector escolhe
+//    o handler do issuer do token (issuer-agnóstico — ADE-004 Inv 4 / ADE-007 Inv 2).
 app.MapReverseProxy()
     .RequireRateLimiting(RateLimiterPolicy)
     .CacheOutput(OutputCachePolicy)

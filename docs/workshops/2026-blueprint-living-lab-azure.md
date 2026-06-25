@@ -42,8 +42,8 @@
                                     │  → n8n (orquestração)            │
                                     │  → Azure SQL DB (mesma DB, marker)│
                                     │  + Chatbot (LLM via MCP server)  │
-                                    │  + App Reg workforce + MSAL/Easy │
-                                    │    Auth (auth customer + admin)  │
+                                    │  + Entra External ID/CIAM (auth  │
+                                    │    cliente) + workforce (admin)  │
                                     │  + App Insights (correlation IDs)│
                                     └──────────────────────────────────┘
 ```
@@ -62,9 +62,9 @@ Todo aluno termina com o app rodando em sua subscription Azure, com o **fluxo v2
 | **Gateway YARP (ASP.NET Core)** | **Open-source self-hosted** (Container App Consumption, por aluno) | **US$0** (scale-to-zero) | Gateway em código C# — rate-limit, cache, transform, JWT validation reimplementados em `Yarp.ReverseProxy` + middleware ASP.NET Core. Transparência didática ("gateway por dentro") e reforço do fio condutor "microsserviço .NET". Substitui APIM Developer — ver ADE-004 |
 | **Azure Functions** | Consumption (.NET 8 isolated) | ~grátis em 1M execs/mês | Serverless, bindings, durable functions |
 | **n8n self-hosted** | Azure Container Apps (Consumption) | ~US$5-15/mês | Workflow automation low-code + ensina containers |
-| **App Registration (tenant workforce do aluno)** | Free | US$0 | OIDC/OAuth2 code flow + PKCE via MSAL.js; social login (Google/GitHub) federado; sem tenant External ID. Substitui Entra External ID — ver ADE-005 |
-| **Easy Auth (App Service Authentication)** | Free | US$0 | Proteção opcional/complementar do front em App Service; usa a App Registration workforce. Alternativa "zero-código-de-auth" — ver ADE-005 |
-| **App Roles (camada admin, mesmo tenant workforce)** | Free | US$0 | App Roles (`Admin`, `Operator`, `Viewer`) na App Registration admin |
+| **Microsoft Entra External ID (CIAM) — camada CLIENTE** | Trial 30 dias (sem subscription/cartão, até 10K objetos) · free 50K MAU | US$0 | Identidade B2C real do cliente final: tenant CIAM separado (`<tenant>.ciamlogin.com`), 1 user flow self-service sign-up/sign-in, social login Google + email/OTP fallback; App Reg SPA (Auth Code + PKCE). Produto CIAM correto p/ consumidor (sucessor do Azure AD B2C). Ver ADE-007 (supersede ADE-005) |
+| **App Registration workforce + App Roles — camada ADMIN** | Free | US$0 | Identidade B2B do operador no tenant Entra ID workforce (`login.microsoftonline.com`); App Roles (`Admin`/`Operator`/`Viewer`) **construídos hands-on**. Dois mundos de identidade coexistindo (cliente CIAM + admin workforce). Ver ADE-007 |
+| **Easy Auth (App Service Authentication)** | Free | US$0 | Proteção opcional/complementar do front em App Service. Alternativa "zero-código-de-auth" — ver ADE-005/ADE-007 |
 | **MCP Server** | Auto-hospedado em Function .NET | Incluído | Protocolo de tools para LLM — assunto-quente 2026 |
 | **Chatbot frontend** | Componente React | US$0 | Integração LLM no produto |
 | **LLM provider** | Google Gemini 2.0 Flash | US$0 | Único LLM moderno gratuito e estável em escala de turma; sem cartão, sem aprovação |
@@ -76,7 +76,7 @@ Todo aluno termina com o app rodando em sua subscription Azure, com o **fluxo v2
 
 - **Custo compartilhado do evento: ~US$0.** Com a substituição do APIM Developer por YARP em código (ADE-004), o gateway deixa de ser um recurso compartilhado: passa a ser um Container App por aluno em Consumption (scale-to-zero ~US$0). Não há mais o "cenário A — APIM compartilhado (~US$50-80)"; ele deixou de existir. O único custo compartilhado residual é o domínio personalizado opcional (~US$12/ano), que não é obrigatório.
 - **Demais recursos por aluno (incl. o Container App do gateway YARP):** US$5-15 em 40h.
-- **Identidade (App Registration workforce + Easy Auth, ADE-005):** US$0, sem tenant External ID compartilhado para provisionar.
+- **Identidade (Entra External ID/CIAM no cliente + workforce no admin, ADE-007):** US$0. O tenant CIAM usa **trial 30 dias sem subscription/cartão**, pré-provisionado pelo instrutor fora do relógio da aula (não é recurso compartilhado pago); o admin usa o tenant workforce que o aluno já tem.
 - **Mitigação obrigatória:** Azure Budget Alert + script `teardown.ps1` que destrói RG inteiro ao final.
 
 ---
@@ -89,7 +89,7 @@ Todo aluno termina com o app rodando em sua subscription Azure, com o **fluxo v2
 |---|---|---|---|---|
 | F1 | `phase-01-servicebus-functions` | 6h | Mensageria desacoplada | Service Bus + Function entry + Function consumer |
 | F2 | `phase-02-gateway` | 6h | Gateway em código | Gateway YARP (.NET) em Container App — rate-limit, cache, transform, JWT validation em código (ver ADE-004) |
-| F3 | `phase-03-identity` | 6h | Identidade moderna | App Registration (tenant workforce) + MSAL.js (PKCE) + Easy Auth substituem JWT no fluxo v2; sem tenant externo (ver ADE-005) |
+| F3 | `phase-03-identity` | 6h | Identidade moderna (dois mundos) | Cliente no **Entra External ID / CIAM** (`ciamlogin.com`, user flow, Google + OTP) + admin no **workforce** (App Roles); gateway YARP valida o JWT do CIAM; migração `users` v1→CIAM hands-on. Ver ADE-007 (supersede ADE-005) |
 | F4 | `phase-04-orchestration` | 6h | Workflow visual | n8n em Container Apps; orquestra notificação pós-compra |
 | F5 | `phase-05-ai-mcp` | 8h | Inteligência conversacional | MCP server (Function .NET) + chatbot + Gemini 2.0 Flash |
 | F6 | `phase-06-flow-visualizer` | 8h | Observabilidade didática | Flow Visualizer UI com correlation ID animado em tempo real via SignalR |
@@ -326,13 +326,21 @@ jobs:
 
 **DoD aluno (resumo):** sobe o Container App do gateway YARP por aluno; chama compra v2 via URL do gateway; vê rate limiter em código retornar 429 acima do limite; vê output cache responder a 2ª chamada `GET` mais rápido (header de cache hit); CORS restrito ao front e `X-Correlation-ID` propagado downstream; tracing end-to-end via logs do Container App + App Insights. **Nota didática:** "em produção corporativa o equivalente gerenciado é o APIM; aqui ensinamos o conceito em código para transparência" (vira slide/SPEAKER-NOTES).
 
-### F3 — Identidade Moderna (esqueleto)
+### F3 — Identidade Moderna: dois mundos (esqueleto)
 
-**Branch:** `phase-03-identity` · **Duração:** 6h · **Novidade:** App Registration (tenant workforce) + MSAL.js (PKCE) + Easy Auth — sem tenant externo (ver ADE-005)
+**Branch:** `phase-03-identity` · **Duração:** 6h (ver nota de duração estendida das Quartas abaixo) · **Novidade:** cliente no **Entra External ID / CIAM** + admin no **workforce**; migração `users` v1→CIAM hands-on (ver ADE-007, supersede ADE-005)
 
-**Escopo:** introduzir identidade no fluxo v2 usando o **tenant Entra ID workforce que o aluno já tem** (vinculado à sua subscription Azure), via **App Registration** — sem tenant External ID e sem user flows. Caminho recomendado: **App Registration tipo SPA + MSAL.js (`@azure/msal-browser`/`-react`) com Authorization Code Flow + PKCE** no front; o **gateway YARP valida o JWT** (`AddJwtBearer`, ADE-004 Inv 4) contra o discovery do issuer workforce, extrai o claim `oid` e o propaga downstream (header `X-Entra-OID`). Social login (Google/GitHub) federado na App Registration. **Easy Auth (App Service Authentication)** fica como alternativa "zero-código-de-auth" e/ou camada complementar de proteção do front em App Service (callback `/.auth/login/aad/callback`, secret gerenciado). Camada admin = App Roles (`Admin`/`Operator`/`Viewer`) no mesmo tenant workforce. O v1 (bcrypt+JWT local) permanece intacto para comparação. **Mapping de identidade resolvido:** o claim `oid` (GUID estável) é a chave — coluna aditiva `entra_oid` em `purchases`/`users` (ADE-005 Inv 3); não há tabela de mapping a inventar.
+> **Re-escopo (ADE-007, 2026-06-25):** a identidade do **cliente** volta para o **Microsoft Entra External ID (CIAM)** — o produto B2C correto para o consumidor final, sucessor oficial do Azure AD B2C. O tenant workforce **não some**: ele é reposicionado para a camada **admin**. Esse é o desenho canônico de produto B2C: cliente externo no CIAM (`ciamlogin.com`), funcionário interno no workforce (`login.microsoftonline.com`). A premissa de atrito que a ADE-005 usou para descartar o CIAM caiu — hoje há **trial sem subscription/cartão + extensão VS Code**, então o instrutor **pré-provisiona** o tenant/user flow/social IdP fora do relógio da aula.
 
-**DoD aluno (resumo):** login OIDC/social via MSAL.js no SPA → recebe access token → chama o gateway YARP com `Authorization: Bearer` → YARP valida `iss`/`aud`/assinatura e extrai `oid` → Function v2 grava purchase com `entra_oid`. Nenhum tenant External ID provisionado.
+**Escopo (dois mundos de identidade num lab):**
+- **Cliente (B2C) — Entra External ID / CIAM:** tenant CIAM **separado** com **1 user flow** self-service sign-up/sign-in, **social login Google** (pré-configurado pelo instrutor) + **email/OTP** como fallback. O aluno cria uma **App Registration tipo SPA** no tenant CIAM e pluga `authority = <tenant>.ciamlogin.com` no MSAL (`@azure/msal-browser`/`-react`, Auth Code + PKCE). O **gateway YARP valida o JWT do CIAM** (`AddJwtBearer` → discovery `ciamlogin.com`, ADE-004 Inv 4 preservada), extrai o `oid` e propaga `X-Entra-OID` downstream — **o encadeamento Gateway→Function→SQL não muda** (issuer-agnóstico; só a string da authority/issuer muda).
+- **Admin (B2B) — workforce + App Roles, construído hands-on:** App Registration no tenant Entra ID workforce com **App Roles** (`Admin`/`Operator`/`Viewer`) — login de admin separado do cliente. O gateway aceita os **dois** issuers (configuração, não reescrita).
+- **Migração `users` v1 → CIAM (passo prático do lab):** importa/vincula os usuários `users` v1 ao tenant CIAM e liga o `entra_oid` resultante ao registro existente. É **aditiva e idempotente** — não apaga `users` nem o bcrypt; demonstra a **convivência** v1/v2, não a substituição.
+- **Coexistência didática:** o v1 (bcrypt+JWT local) permanece intacto. O contraste **identidade homegrown** (você gerencia hash/reset/MFA) vs **identidade gerenciada CIAM** (Microsoft cuida) é a lição central das Quartas. **Mapping resolvido:** o `oid` (GUID estável, agora emitido pelo CIAM) é a chave — coluna aditiva `entra_oid` em `purchases`/`users`; sem tabela de mapping (ADE-007 Inv 3, herda ADE-005).
+
+> **⚠️ Nota de duração — sessão única "longa" (decisão do owner, 2026-06-25):** Gateway YARP + cliente CIAM + admin workforce + migração hands-on somam **~7,5–9,5h**, acima do padrão ~6h/fase. O owner optou conscientemente por **sessão única completa** (não dividir A/B), preservando todas as decisões hands-on. O roteiro deve sinalizar a duração estendida e prever pontos de pausa naturais (ao fim do bloco do cliente CIAM) caso a turma precise quebrar em 2 encontros na prática.
+
+**DoD aluno (resumo):** login CIAM (sign-up self-service + Google) via MSAL no SPA → access token com authority `ciamlogin.com` → gateway YARP valida o JWT do CIAM e extrai `oid` → Function v2 grava `entra_oid` ao lado do v1; admin (workforce + App Roles) construído e funcional; migração `users` v1→CIAM executada (mesmo usuário com bcrypt v1 + `entra_oid` CIAM). B2C legado (Azure AD B2C) **não** provisionado.
 
 ### F4 — Workflow Visual (esqueleto)
 
@@ -440,33 +448,39 @@ Trocar LLM por env var (Gemini → Groq → Mistral) sem mexer no código do cha
 
 ---
 
-## 8. Identity Strategy
+## 8. Identity Strategy — dois mundos (cliente CIAM + admin workforce)
 
-> **Re-escopo (ADE-005):** o Entra External ID foi removido. A identidade do v2 usa o **tenant Entra ID workforce que o aluno já possui** (vinculado à sua subscription Azure), via App Registration + MSAL.js (PKCE) + Easy Auth — sem tenant externo e sem user flows. Custo US$0.
+> **Re-escopo (ADE-007, supersede ADE-005):** a identidade do **cliente** volta para o **Microsoft Entra External ID (CIAM)** — o produto B2C correto para o consumidor final. O tenant workforce é **reposicionado para o admin**, não removido. Esse é o desenho canônico de produto B2C: **cliente externo no CIAM (`<tenant>.ciamlogin.com`), funcionário interno no workforce (`login.microsoftonline.com`)**. Custo US$0 (trial CIAM sem subscription/cartão + free 50K MAU). A premissa de "atrito alto" que a ADE-005 usou para descartar o CIAM caiu: o instrutor **pré-provisiona** o tenant/user flow/social IdP fora do relógio da aula.
+>
+> **Esclarecimento de terminologia (vai para o slide de abertura de F2):** **Entra Connect** = sync AD on-prem → nuvem (irrelevante aqui); **Entra ID** = crachá de funcionário (workforce/B2B); **Entra External ID** = cadastro de cliente (CIAM/B2C). O comprador entra pelo External ID; o admin pelo workforce.
 
-### Camada customer: App Registration no tenant workforce + MSAL.js (PKCE)
+### Camada CLIENTE (B2C): Microsoft Entra External ID / CIAM
 
-- O aluno cria uma **App Registration tipo SPA** (`student-<iniciais>-v2`) no seu tenant workforce — não há tenant External ID nem user flows.
-- Front (SPA Vite/React) usa **`@azure/msal-browser`/`@azure/msal-react`** com **Authorization Code Flow + PKCE** (sem client secret no browser) para login e obtenção do access token.
-- O access token é enviado como `Authorization: Bearer` e **validado no gateway YARP** (`AddJwtBearer`, ADE-004 Inv 4) — ponto único de validação de identidade.
-- **Social login (Google/GitHub)** configurado como identity provider federado na App Registration — objetivo "social login / OIDC" preservado sem CIAM separado.
-- Substitui o `JWT + bcrypt local` apenas no fluxo v2 (v1 mantém para comparação didática).
+- **Tenant CIAM separado** (trial 30 dias, sem subscription/cartão, até 10K objetos) pré-provisionado pelo instrutor com **1 user flow** self-service sign-up/sign-in.
+- **Social login Google** pré-configurado como identity provider + **email/OTP** como fallback de zero dependência.
+- O aluno cria uma **App Registration tipo SPA** no tenant CIAM e usa **`@azure/msal-browser`/`@azure/msal-react`** com **Auth Code + PKCE**; a única string que muda vs o caminho anterior é **`authority = <tenant>.ciamlogin.com`** (não `login.microsoftonline.com`).
+- O access token CIAM é enviado como `Authorization: Bearer` e **validado no gateway YARP** (`AddJwtBearer` → discovery `ciamlogin.com`, ADE-004 Inv 4 preservada) — ponto único de validação de identidade. O gateway é **issuer-agnóstico**: validar o token CIAM usa a mesma mecânica que validaria o workforce.
+- **Azure AD B2C legado está depreciado** (fim de venda 2025-05-01) — **não usar**; External ID é o sucessor oficial.
 
-### Camada admin: App Roles no mesmo tenant workforce
+### Camada ADMIN (B2B): workforce + App Roles, construído hands-on
 
-- App Registration com **App Roles** (`Admin`, `Operator`, `Viewer`).
-- OAuth2 Authorization Code Flow.
-- Tokens validados no gateway YARP (`AddJwtBearer`), não em policy APIM.
+- App Registration no **tenant Entra ID workforce** com **App Roles** (`Admin`, `Operator`, `Viewer`) — login de admin **construído como entregável do lab**, não só conceito.
+- OAuth2 Authorization Code Flow; tokens validados no gateway YARP (`AddJwtBearer`), que aceita os **dois** issuers (CIAM + workforce) por configuração.
+
+### Migração `users` v1 → CIAM (passo prático, aditivo)
+
+- Importa/vincula os usuários `users` v1 ao tenant CIAM e liga o `entra_oid` resultante ao registro existente.
+- É **aditiva e idempotente**: não apaga `users` nem o bcrypt. Demonstra a **convivência** v1/v2 — o ápice didático (mesmo usuário com bcrypt v1 + `entra_oid` CIAM).
+- O mecanismo exato (Graph import/link) é detalhe a confirmar no draft da story com @data-engineer (ADE-007 Inv 6).
 
 ### Easy Auth (App Service Authentication) — alternativa / camada complementar
 
-- Caminho alternativo "zero-código-de-auth": Easy Auth protege o App Service do front (login Entra automático), expõe `/.auth/me` e header `X-MS-CLIENT-PRINCIPAL`, callback `/.auth/login/aad/callback`, secret gerenciado pelo App Service (elegível a Key Vault, ADE-003 Inv 3).
-- Pressupõe **front em App Service** (recurso de App Service) — coerente com a baseline PaaS (ADE-003) após EPIC-001 S4.
-- Recomendação (ADE-005): usar MSAL.js como caminho principal (validação uniforme no gateway); Easy Auth como complemento opcional de proteção do front.
+- Caminho alternativo "zero-código-de-auth": Easy Auth protege o App Service do front, expõe `/.auth/me` e header `X-MS-CLIENT-PRINCIPAL`, callback `/.auth/login/aad/callback`, secret gerenciado (elegível a Key Vault, ADE-003 Inv 3).
+- Pressupõe **front em App Service** — coerente com a baseline PaaS (ADE-003) após EPIC-001 S4. Permanece opção válida; o caminho principal é MSAL no SPA (validação uniforme no gateway).
 
-### Mapping de identidade — RESOLVIDO (ADE-005, supersede ADE-001)
+### Mapping de identidade — RESOLVIDO (ADE-007 herda ADE-005, supersede ADE-001)
 
-> **O claim `oid` (Object ID, GUID estável do usuário no tenant workforce) é a chave canônica de identidade do v2.** A tabela `purchases`/`users` recebe a coluna aditiva e idempotente `entra_oid UNIQUEIDENTIFIER` (+ índice), populada com o `oid` propagado pelo gateway (`X-Entra-OID`). **Não há tabela de mapping nem estratégia GUID↔int a inventar** — a decisão antes pendente está fechada em ADE-005 Invariante 3.
+> **O claim `oid` (Object ID, GUID estável do usuário) continua a chave canônica de identidade do v2** — agora emitido pelo **tenant CIAM** em vez do workforce. A tabela `purchases`/`users` mantém a coluna aditiva e idempotente `entra_oid UNIQUEIDENTIFIER` (+ índice), populada com o `oid` propagado pelo gateway (`X-Entra-OID`). **A coluna não muda de schema — só muda a origem do GUID.** Não há tabela de mapping nem estratégia GUID↔int a inventar (ADE-007 Inv 3).
 
 ---
 
@@ -475,11 +489,11 @@ Trocar LLM por env var (Gemini → Groq → Mistral) sem mexer no código do cha
 | # | Risco | Impacto | Mitigação |
 |---|---|---|---|
 | 1 | Custo Azure ultrapassa budget do evento | Alto | Gateway YARP custo ~US$0 (sem APIM, ADE-004) + Budget Alert + script teardown ao final |
-| 2 | ~~Atrito de setup External ID em F3~~ — **ELIMINADO** (ADE-005) | — | Sem tenant External ID nem user flows; usa o tenant workforce que o aluno já tem. Risco fechado. |
+| 2 | Atrito de setup do Entra External ID / CIAM em F3 (reaberto pela ADE-007) | Médio | **MITIGADO** (não eliminado): trial CIAM sem subscription/cartão + **instrutor pré-provisiona** tenant/user flow/Google IdP fora do relógio da aula; email/OTP como fallback de zero dependência. Trial expira em 30d → recriar por turma via script/VS Code. |
 | 3 | n8n exposto sem auth na free config | Alto | Basic auth obrigatório no provisioning; documentado em PORTAL-GUIDE |
 | 4 | MCP é tecnologia recente — quebra de spec | Médio | Pinning de versão do SDK MCP em todas as fases |
 | 5 | Drift entre branches (hotfix em F1 após F2 criada) | Médio | Congelar `main` pré-workshop; cherry-pick scriptado |
-| 6 | ~~Mapping de IDs Entra ↔ local~~ — **RESOLVIDO** (ADE-005) | — | Claim `oid` é a chave; coluna aditiva `entra_oid`. Sem tabela de mapping. Risco fechado. |
+| 6 | ~~Mapping de IDs Entra ↔ local~~ — **RESOLVIDO** (ADE-007 herda ADE-005) | — | Claim `oid` é a chave (agora emitido pelo CIAM); coluna aditiva `entra_oid` — só muda a origem do GUID. Sem tabela de mapping. Risco fechado. |
 | 7 | 40h de workshop causa fadiga | Médio | Formato sugerido: 4 finais-de-semana × 10h ou 5 dias × 8h |
 | 8 | Gemini cai durante aula F5 | Alto | Fallback Groq + cache local pré-configurado |
 | 9 | Cold start de Functions trava demo ao vivo | Baixo | Warmup automático 5min antes de cada bloco hands-on |
@@ -508,7 +522,7 @@ Trocar LLM por env var (Gemini → Groq → Mistral) sem mexer no código do cha
 | Recurso | Custo |
 |---|---|
 | Gateway (antes APIM Developer) | **US$0** — agora YARP em Container App por aluno (ADE-004); deixou de ser recurso compartilhado |
-| Identidade (antes tenant External ID) | US$0 — agora tenant workforce do aluno + App Registration (ADE-005); nada compartilhado a provisionar |
+| Identidade — cliente CIAM + admin workforce (ADE-007) | US$0 — tenant CIAM em **trial sem subscription/cartão** (pré-provisionado pelo instrutor, não pago/compartilhado) + tenant workforce que o aluno já tem |
 | Domínio personalizado (opcional) | ~US$12/ano |
 | **Total compartilhado** | **~US$0** (apenas o domínio opcional ~US$12/ano, se adotado) |
 
@@ -532,7 +546,7 @@ Este blueprint está pronto para virar epic. Sugerido:
 |---|---|---|---|
 | 2.1 | F1 — Service Bus + Functions | Phase | EPIC-001 done |
 | 2.2 | F2 — Gateway YARP + policies em código | Phase | 2.1 |
-| 2.3 | F3 — App Registration + MSAL/Easy Auth | Phase | 2.2 |
+| 2.3 | F3 — Identidade: cliente CIAM + admin workforce + migração v1→CIAM | Phase | 2.2 |
 | 2.4 | F4 — n8n em Container Apps | Phase | 2.3 |
 | 2.5 | F5 — MCP server + chatbot + Gemini | Phase | 2.4 |
 | 2.6 | F6 — Flow Visualizer | Phase | 2.5 |
@@ -551,7 +565,7 @@ Este blueprint está pronto para virar epic. Sugerido:
 | 1 | Hospedagem n8n | Azure Container Apps (Consumption) com basic auth |
 | 2 | LLM padrão | Gemini 2.0 Flash + MCP para portabilidade |
 | 3 | Quantas fases | 6 (F1-F6) + merge final |
-| 4 | Escopo identidade v2 | App Registration (tenant workforce) + MSAL/Easy Auth substitui JWT só no v2; v1 mantém p/ comparação. Sem External ID (re-escopo ADE-005) |
+| 4 | Escopo identidade v2 | **Cliente no Entra External ID / CIAM** (`ciamlogin.com`) + **admin no workforce** (App Roles) + **migração `users` v1→CIAM** hands-on; v1 mantém p/ comparação (re-escopo ADE-007, supersede ADE-005). *Evolução: a ADE-005 [2026-06-03] havia removido o External ID por atrito; a ADE-007 [2026-06-25] o reintroduz para o cliente — premissa de atrito revista (trial sem cartão + pré-provisionamento).* |
 | 5 | Tools do MCP | `consultar_disponibilidade`, `verificar_ingresso`, `consultar_bracket` |
 | 6 | Flow Visualizer real-time | SignalR free tier + fallback polling |
 | 7 | Gateway + custo | **Sem APIM** — gateway YARP em código (.NET) em Container App por aluno, custo ~US$0; custo compartilhado do gateway eliminado (re-escopo ADE-004) |
@@ -559,13 +573,13 @@ Este blueprint está pronto para virar epic. Sugerido:
 | 9 | Audiência | Devs polyglot com background cloud (não exige .NET prévio) |
 | 10 | Material por fase | 6 artefatos: README + PORTAL-GUIDE + SPEAKER-NOTES + slides + vídeo + branch |
 
-### Decisões resolvidas pós-blueprint (re-escopo 2026-06-03)
+### Decisões resolvidas pós-blueprint (re-escopo 2026-06-03, revisado 2026-06-25)
 
 | Decisão | Resolução | Ref |
 |---|---|---|
-| Mapping IDs Entra ↔ local | **RESOLVIDA** — claim `oid` é a chave; coluna aditiva `entra_oid` (sem tabela de mapping) | ADE-005 (supersede ADE-001) |
+| Mapping IDs Entra ↔ local | **RESOLVIDA** — claim `oid` é a chave; coluna aditiva `entra_oid` (sem tabela de mapping). Só muda a origem do GUID (CIAM) | ADE-007 herda ADE-005 (supersede ADE-001) |
 | Gateway (APIM vs código) | **RESOLVIDA** — YARP em código, sem APIM | ADE-004 |
-| Identidade (External ID vs workforce) | **RESOLVIDA** — App Registration tenant workforce + MSAL/Easy Auth | ADE-005 |
+| Identidade do CLIENTE (External ID vs workforce) | **REVISADA** — volta para **Entra External ID / CIAM** (cliente) + **workforce no admin**; premissa de atrito da ADE-005 revista | ADE-007 (supersede ADE-005) |
 
 ### Decisões pendentes (carry-forward para fases específicas)
 
