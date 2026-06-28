@@ -12,7 +12,7 @@ using Yarp.ReverseProxy.Transforms;
 // Cada capacidade tem paridade 1:1 com uma policy APIM (ADE-004 Invariante 3).
 //
 // Pipeline (ORDEM IMPORTA — ADE-004 / story Task 2.6):
-//   UseCors → UseRateLimiter → UseOutputCache → UseAuthentication
+//   UseCors → UseRateLimiter → XCacheMiddleware (cache 30s) → UseAuthentication
 //           → UseAuthorization → MapReverseProxy
 // =============================================================================
 
@@ -20,7 +20,6 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Constantes de configuração de pipeline.
 const string RateLimiterPolicy = "fixed";              // partição fixed-window por IP (AC-5)
-const string OutputCachePolicy = "purchase-status-30s"; // cache 30s no GET (AC-6)
 const string CorsPolicy = "frontend";                   // origin restrito ao front (AC-7)
 const string CorrelationHeader = "X-Correlation-ID";    // ADE-000 Inv 5 / AC-8
 const string EntraOidHeader = "X-Entra-OID";            // Story 2.3 AC-7 / ADE-005 Inv 4
@@ -126,16 +125,12 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // -----------------------------------------------------------------------------
-// AC-6 — Output cache em código (paridade com APIM cache-lookup/cache-store).
-// Policy de 30s + header X-Cache HIT/MISS (XCacheOutputCachePolicy).
+// AC-6 — Cache de borda (30s) em código (paridade com APIM cache-lookup/cache-store).
+// Implementado pelo XCacheMiddleware (IMemoryCache) — NÃO pelo OutputCache nativo, que
+// não captura respostas proxied pelo YARP (o forwarder chama DisableBuffering). Ver a
+// documentação no próprio XCacheMiddleware.
 // -----------------------------------------------------------------------------
-builder.Services.AddOutputCache(options =>
-{
-    options.AddPolicy(OutputCachePolicy, builderPolicy =>
-        builderPolicy
-            .AddPolicy<XCacheOutputCachePolicy>()
-            .Expire(TimeSpan.FromSeconds(30)));
-});
+builder.Services.AddMemoryCache();
 
 // -----------------------------------------------------------------------------
 // AC-7 — CORS restrito ao domínio do frontend (paridade com APIM cors).
@@ -367,8 +362,7 @@ var app = builder.Build();
 // Pipeline na ORDEM correta (Task 2.6 / ADE-004):
 app.UseCors(CorsPolicy);          // 1. CORS
 app.UseRateLimiter();             // 2. Rate limiter (429)
-app.UseMiddleware<XCacheMiddleware>(); // 2.5 default X-Cache: MISS (antes do cache)
-app.UseOutputCache();             // 3. Output cache (30s) — seta X-Cache: HIT no store
+app.UseMiddleware<XCacheMiddleware>(); // 3. Cache de borda (30s) + X-Cache HIT/MISS (AC-6)
 app.UseAuthentication();          // 4. Authentication (selector roteia CIAM vs Admin)
 app.UseAuthorization();           // 5. Authorization
 
@@ -392,7 +386,6 @@ app.MapGet("/admin/ping", () => Results.Ok(new { status = "ok", scope = "admin" 
 //    o handler do issuer do token (issuer-agnóstico — ADE-004 Inv 4 / ADE-007 Inv 2).
 app.MapReverseProxy()
     .RequireRateLimiting(RateLimiterPolicy)
-    .CacheOutput(OutputCachePolicy)
     .RequireAuthorization();
 
 app.Run();
